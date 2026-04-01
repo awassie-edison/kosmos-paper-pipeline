@@ -207,7 +207,7 @@ def run_pipeline(
     output_papers = []
     for p in final_papers:
         clean = {k: v for k, v in p.items()
-                 if k not in ("size_details", "size_verified", "verified_size_gb",
+                 if k not in ("size_details", "size_verified",
                               "is_open_access", "pmid", "pmcid", "abstract",
                               "authors", "source", "include", "exclusion_reason")}
         output_papers.append(clean)

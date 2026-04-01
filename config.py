@@ -155,3 +155,84 @@ PUBMED_DELAY = 0.35  # <3 req/sec
 GEO_DELAY = 0.2
 ZENODO_DELAY = 0.2
 CLAUDE_API_DELAY = 0.5
+
+# ---------------------------------------------------------------------------
+# Analysis script filtering (prevent answer leakage in benchmarks)
+# ---------------------------------------------------------------------------
+
+# Data extensions: NEVER filtered, even in code/ directories
+DATA_EXTENSIONS: set[str] = {
+    # Single-cell / HDF5
+    ".h5", ".h5ad", ".hdf5", ".loom",
+    # Tabular data
+    ".csv", ".tsv", ".txt", ".tab",
+    # Archives
+    ".gz", ".tar", ".bz2", ".xz", ".zip", ".rar", ".7z",
+    # Alignment / sequence
+    ".bam", ".sam", ".cram",
+    ".fastq", ".fq", ".fasta", ".fa",
+    # Genomic intervals / variants / annotations
+    ".bed", ".bedgraph", ".bigwig", ".bw", ".wig",
+    ".vcf", ".bcf", ".gff", ".gtf", ".gff3",
+    # Sparse matrices
+    ".mtx",
+    # R data objects (data, not scripts)
+    ".rds", ".rda", ".rdata",
+    # Columnar / structured data
+    ".parquet", ".feather", ".arrow",
+    ".json", ".xml", ".yaml", ".yml",
+    # Spreadsheets
+    ".xlsx", ".xls",
+    # Images / figures
+    ".tiff", ".tif", ".png", ".jpg", ".jpeg", ".svg", ".pdf",
+    # Neuroimaging
+    ".nii", ".mgz", ".mgh",
+    # EEG
+    ".edf", ".bdf", ".set", ".fdt",
+    # Mass spectrometry
+    ".mzml", ".mzxml", ".raw", ".mgf",
+    # Microarray
+    ".cel", ".idat",
+    # Flow cytometry
+    ".fcs",
+    # Other data
+    ".npz", ".npy", ".pkl", ".pickle", ".joblib",
+    ".sqlite", ".db",
+}
+
+# Script extensions: ALWAYS filtered
+SCRIPT_EXTENSIONS: set[str] = {
+    ".py", ".r", ".rmd", ".qmd",
+    ".ipynb",
+    ".sh", ".bash", ".zsh", ".csh",
+    ".m",  # MATLAB
+    ".jl",  # Julia
+    ".pl", ".pm",  # Perl
+    ".wdl", ".nf", ".smk",  # Workflow: WDL, Nextflow, Snakemake
+    ".cwl",  # Common Workflow Language
+    ".groovy",  # Nextflow DSL
+}
+
+# Exact filenames: ALWAYS filtered (case-insensitive)
+SCRIPT_FILENAMES: set[str] = {
+    "makefile", "snakefile", "rakefile",
+    "dockerfile", "jenkinsfile",
+    "nextflow.config", "snakemake",
+    "requirements.txt", "environment.yml", "environment.yaml",
+    "setup.py", "setup.cfg", "pyproject.toml",
+    "conda_env.yml", "conda_env.yaml",
+    "renv.lock", "packrat.lock",
+    ".gitignore", ".dockerignore",
+}
+
+# Directory path segments: filter files here unless they have a DATA extension
+SCRIPT_DIRECTORIES: set[str] = {
+    "code", "codes",
+    "scripts", "script",
+    "analysis", "analyses",
+    "notebooks", "notebook",
+    "src", "source",
+    "pipeline", "pipelines",
+    "workflow", "workflows",
+    ".snakemake",
+}

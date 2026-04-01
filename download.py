@@ -12,6 +12,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from . import config
+from .script_filter import filter_file_list, remove_scripts_from_directory, clean_zip_archives
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +57,8 @@ def download_geo(accession: str, dest_dir: Path) -> Path:
     if not files:
         log.warning("No files found for GEO %s", accession)
         return dest_dir
+
+    files, _excluded = filter_file_list(files, dataset_label=f"GEO:{accession}")
 
     for fi in files:
         dest_path = dest_dir / fi["name"]
@@ -118,6 +121,8 @@ def download_zenodo(accession: str, dest_dir: Path) -> Path:
     if not files:
         log.warning("No files found for Zenodo %s", accession)
         return dest_dir
+
+    files, _excluded = filter_file_list(files, dataset_label=f"Zenodo:{accession}")
 
     for fi in files:
         if not fi["url"]:
@@ -219,6 +224,8 @@ def download_openneuro(dataset_id: str, dest_dir: Path) -> Path:
         log.warning("No files found for OpenNeuro %s", dataset_id)
         return dest_dir
 
+    files, _excluded = filter_file_list(files, dataset_label=f"OpenNeuro:{dataset_id}")
+
     for fi in files:
         dest_path = dest_dir / fi["name"]
         if dest_path.exists():
@@ -297,6 +304,8 @@ def download_omix(accession: str, dest_dir: Path) -> Path:
         log.warning("No downloadable files found for OMIX %s", accession)
         return dest_dir
 
+    files, _excluded = filter_file_list(files, dataset_label=f"OMIX:{accession}")
+
     for fi in files:
         dest_path = dest_dir / fi["name"]
         if dest_path.exists():
@@ -361,6 +370,8 @@ def download_figshare(article_id: str, dest_dir: Path) -> Path:
     if not files:
         log.warning("No files found for Figshare article %s", article_id)
         return dest_dir
+
+    files, _excluded = filter_file_list(files, dataset_label=f"Figshare:{article_id}")
 
     for fi in files:
         if not fi["url"]:
@@ -432,6 +443,19 @@ def download_dryad(doi: str, dest_dir: Path) -> Path:
         log.exception("Failed to download Dryad dataset %s", doi)
         if dest_path.exists():
             dest_path.unlink()
+        return dest_dir
+
+    # Extract ZIP and filter scripts from extracted tree
+    if dest_path.exists() and dest_path.suffix == ".zip":
+        import zipfile
+        extract_dir = dest_dir / "extracted"
+        try:
+            with zipfile.ZipFile(dest_path, "r") as zf:
+                zf.extractall(extract_dir)
+            log.info("Extracted Dryad ZIP to %s", extract_dir)
+            remove_scripts_from_directory(extract_dir, dataset_label=f"Dryad:{doi}")
+        except zipfile.BadZipFile:
+            log.warning("Dryad archive is not a valid ZIP: %s", dest_path)
 
     return dest_dir
 
@@ -474,6 +498,9 @@ def _download_single_dataset(acc_info: dict, base_dir: Path) -> tuple[str, str |
     else:
         log.warning("Unsupported repository %s for accession %s — skipping download", repo, acc)
         return acc, None
+
+    # Post-download: inspect any ZIP files for scripts
+    clean_zip_archives(dest_dir, dataset_label=f"{repo}:{acc}")
 
     return acc, str(dest_dir)
 
