@@ -16,7 +16,7 @@ Automated pipeline for discovering, evaluating, and downloading computational bi
 ## Setup
 
 ```bash
-pip install -r requirements.txt
+uv sync
 export ANTHROPIC_API_KEY=sk-...
 ```
 
