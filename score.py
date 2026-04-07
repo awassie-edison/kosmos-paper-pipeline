@@ -3,7 +3,7 @@
 import logging
 from collections import Counter
 
-from . import config
+from .config import get_config
 
 log = logging.getLogger(__name__)
 
@@ -14,17 +14,18 @@ def compute_score(paper: dict) -> float:
     The base quality_score comes from Claude's evaluation. We only apply
     the tier-2 penalty here (the rest of the scoring is done by Claude).
     """
+    cfg = get_config()
     base = paper.get("quality_score", 0)
     tier = paper.get("journal_tier", 1)
     if tier == 2:
-        base -= config.TIER_2_PENALTY
+        base -= cfg.thresholds.tier_2_penalty
     return round(max(base, 1.0), 1)
 
 
 def apply_diversity_adjustment(
     papers: list[dict],
-    max_papers: int = config.MAX_PAPERS_OUTPUT,
-    min_domains: int = config.MIN_DOMAINS,
+    max_papers: int | None = None,
+    min_domains: int | None = None,
 ) -> list[dict]:
     """Select top papers while ensuring topic diversity.
 
@@ -33,6 +34,12 @@ def apply_diversity_adjustment(
     2. Greedily pick the highest-scoring paper from each domain first.
     3. Fill remaining slots from the overall ranking.
     """
+    cfg = get_config()
+    if max_papers is None:
+        max_papers = cfg.pipeline.max_papers
+    if min_domains is None:
+        min_domains = cfg.thresholds.min_domains
+
     if len(papers) <= max_papers:
         return sorted(papers, key=lambda p: -p.get("quality_score", 0))
 
@@ -82,19 +89,22 @@ def apply_diversity_adjustment(
 
 def score_and_rank(
     papers: list[dict],
-    max_papers: int = config.MAX_PAPERS_OUTPUT,
+    max_papers: int | None = None,
 ) -> list[dict]:
     """Apply scoring adjustments, filter by min score, rank with diversity."""
+    cfg = get_config()
+
     # Recompute scores with tier penalty
     for p in papers:
         p["quality_score"] = compute_score(p)
 
     # Filter by minimum score
-    passing = [p for p in papers if p["quality_score"] >= config.MIN_QUALITY_SCORE]
+    min_score = cfg.thresholds.min_quality_score
+    passing = [p for p in papers if p["quality_score"] >= min_score]
 
     removed = len(papers) - len(passing)
     if removed:
-        log.info("Removed %d papers below minimum score %.1f", removed, config.MIN_QUALITY_SCORE)
+        log.info("Removed %d papers below minimum score %.1f", removed, min_score)
 
     # Apply diversity adjustment and select final set
     return apply_diversity_adjustment(passing, max_papers=max_papers)

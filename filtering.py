@@ -4,51 +4,28 @@ import logging
 import re
 
 from . import config
+from .config import get_config
 
 log = logging.getLogger(__name__)
-
-# Patterns that indicate non-research articles
-_EXCLUDE_TYPE_PATTERNS = [
-    r"\breview\b",
-    r"\bperspective\b",
-    r"\beditorial\b",
-    r"\bcommentary\b",
-    r"\bcorrespondence\b",
-    r"\bletter to the editor\b",
-    r"\berratum\b",
-    r"\bcorrigendum\b",
-    r"\bretraction\b",
-]
-
-# Patterns that indicate method/tool papers (not hypothesis-driven)
-_EXCLUDE_TOOL_PATTERNS = [
-    r"\ba (?:tool|package|pipeline|framework|platform|software|database|resource) for\b",
-    r"\bwe (?:present|introduce|develop|describe) (?:a |an )?(?:new |novel )?(?:tool|method|package|pipeline|software)\b",
-]
-
-
-_EXCLUDED_PUB_TYPES = {
-    "review", "review-article", "editorial", "comment", "commentary",
-    "letter", "correspondence", "erratum", "corrigendum",
-    "retraction", "retracted publication",
-}
 
 
 def _is_excluded_type(paper: dict) -> bool:
     """Return True if paper looks like a review, editorial, or method/tool paper."""
+    cfg = get_config()
+
     # Check structured pub_types from Europe PMC (most reliable)
     pub_types = {t.lower() for t in paper.get("pub_types", [])}
-    if pub_types & _EXCLUDED_PUB_TYPES:
+    if pub_types & cfg.filtering.excluded_pub_types:
         return True
 
     title = paper.get("title", "").lower()
 
-    for pat in _EXCLUDE_TYPE_PATTERNS:
+    for pat in cfg.filtering.exclude_type_patterns:
         if re.search(pat, title, re.IGNORECASE):
             return True
 
     # Only flag tool papers if the pattern is in the title (too noisy in abstracts)
-    for pat in _EXCLUDE_TOOL_PATTERNS:
+    for pat in cfg.filtering.exclude_tool_patterns:
         if re.search(pat, title, re.IGNORECASE):
             return True
 
@@ -69,6 +46,7 @@ def filter_papers(
     Returns dict with keys: tier1, tier2, excluded_tier0, excluded_type,
     excluded_oa, excluded_doi, candidates.
     """
+    cfg = get_config()
     exclude_dois = {d.lower().strip() for d in (exclude_dois or set())}
 
     tier1: list[dict] = []
@@ -109,27 +87,11 @@ def filter_papers(
             tier2.append(p)
 
     # Sort candidates to evaluate highest-value journals first.
-    # Within tier 1, prioritize journals that publish hypothesis-driven biology
-    # over those that skew toward method/tool papers.
-    JOURNAL_PRIORITY = {
-        "nature": 0, "science": 0, "cell": 0,
-        "nature genetics": 1, "nature neuroscience": 1,
-        "nature medicine": 1, "nature cell biology": 1,
-        "nature methods": 1, "nature biotechnology": 1,
-        "cell genomics": 1, "cell systems": 1, "cell reports": 1,
-        "molecular cell": 1, "cell stem cell": 1, "cell metabolism": 1,
-        "science advances": 2, "nature communications": 2,
-        "genome biology": 2, "genome research": 2,
-        "elife": 3, "the embo journal": 3, "embo reports": 3,
-        "proceedings of the national academy of sciences": 3,
-        "nucleic acids research": 4,
-        "plos genetics": 4,
-        "plos computational biology": 5,  # many method papers — evaluate last in tier 1
-    }
+    journal_priority = cfg.journals.priority
 
     def _sort_key(p):
         j = p.get("journal", "").lower().strip()
-        return (p.get("journal_tier", 1), JOURNAL_PRIORITY.get(j, 3))
+        return (p.get("journal_tier", 1), journal_priority.get(j, 3))
 
     tier1.sort(key=_sort_key)
     candidates = tier1 + tier2

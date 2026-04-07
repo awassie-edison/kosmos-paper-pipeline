@@ -11,7 +11,7 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-from . import config
+from .config import get_config
 from .script_filter import filter_file_list, remove_scripts_from_directory, clean_zip_archives
 
 log = logging.getLogger(__name__)
@@ -23,11 +23,12 @@ log = logging.getLogger(__name__)
 
 def _list_geo_files(accession: str) -> list[dict]:
     """List supplementary files for a GEO accession with their download URLs."""
+    cfg = get_config()
     prefix = accession[:-3] + "nnn"
-    base_url = f"{config.GEO_FTP_BASE}/{prefix}/{accession}/suppl/"
+    base_url = f"{cfg.api_endpoints.geo_ftp_base}/{prefix}/{accession}/suppl/"
 
     try:
-        resp = requests.get(base_url, timeout=15)
+        resp = requests.get(base_url, timeout=cfg.timeouts.api_listing)
         if resp.status_code != 200:
             log.warning("Cannot list GEO files for %s (HTTP %d)", accession, resp.status_code)
             return []
@@ -51,6 +52,7 @@ def _list_geo_files(accession: str) -> list[dict]:
 
 def download_geo(accession: str, dest_dir: Path) -> Path:
     """Download all supplementary files for a GEO series."""
+    cfg = get_config()
     dest_dir.mkdir(parents=True, exist_ok=True)
     files = _list_geo_files(accession)
 
@@ -68,7 +70,7 @@ def download_geo(accession: str, dest_dir: Path) -> Path:
 
         log.info("Downloading: %s → %s", fi["url"], dest_path.name)
         try:
-            with requests.get(fi["url"], stream=True, timeout=300) as resp:
+            with requests.get(fi["url"], stream=True, timeout=cfg.timeouts.download_stream) as resp:
                 resp.raise_for_status()
                 with open(dest_path, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=8192):
@@ -79,7 +81,7 @@ def download_geo(accession: str, dest_dir: Path) -> Path:
             if dest_path.exists():
                 dest_path.unlink()
 
-        time.sleep(config.GEO_DELAY)
+        time.sleep(cfg.rate_limits.geo_delay)
 
     return dest_dir
 
@@ -90,13 +92,15 @@ def download_geo(accession: str, dest_dir: Path) -> Path:
 
 def _list_zenodo_files(accession: str) -> list[dict]:
     """Get file list and download URLs from Zenodo API."""
+    cfg = get_config()
     record_id = re.search(r'(\d{5,})', accession)
     if not record_id:
         return []
     record_id = record_id.group(1)
 
     try:
-        resp = requests.get(f"{config.ZENODO_API}/{record_id}", timeout=15)
+        resp = requests.get(f"{cfg.api_endpoints.zenodo_api}/{record_id}",
+                            timeout=cfg.timeouts.api_listing)
         if resp.status_code != 200:
             return []
         data = resp.json()
@@ -115,6 +119,7 @@ def _list_zenodo_files(accession: str) -> list[dict]:
 
 def download_zenodo(accession: str, dest_dir: Path) -> Path:
     """Download all files from a Zenodo record."""
+    cfg = get_config()
     dest_dir.mkdir(parents=True, exist_ok=True)
     files = _list_zenodo_files(accession)
 
@@ -139,7 +144,7 @@ def download_zenodo(accession: str, dest_dir: Path) -> Path:
             dest_path.name,
         )
         try:
-            with requests.get(fi["url"], stream=True, timeout=600) as resp:
+            with requests.get(fi["url"], stream=True, timeout=cfg.timeouts.download_large) as resp:
                 resp.raise_for_status()
                 with open(dest_path, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=8192):
@@ -150,7 +155,7 @@ def download_zenodo(accession: str, dest_dir: Path) -> Path:
             if dest_path.exists():
                 dest_path.unlink()
 
-        time.sleep(config.ZENODO_DELAY)
+        time.sleep(cfg.rate_limits.zenodo_delay)
 
     return dest_dir
 
@@ -159,9 +164,6 @@ def download_zenodo(accession: str, dest_dir: Path) -> Path:
 # OpenNeuro files
 # ---------------------------------------------------------------------------
 
-OPENNEURO_API = "https://openneuro.org/crn/datasets"
-
-
 def _list_openneuro_files(dataset_id: str) -> list[dict]:
     """Get file list from the latest snapshot of an OpenNeuro dataset.
 
@@ -169,9 +171,10 @@ def _list_openneuro_files(dataset_id: str) -> list[dict]:
       GET /datasets/{id}/snapshots  -> list of snapshots (pick latest)
       GET /datasets/{id}/snapshots/{tag}/files  -> flat file listing
     """
-    snapshots_url = f"{OPENNEURO_API}/{dataset_id}/snapshots"
+    cfg = get_config()
+    snapshots_url = f"{cfg.api_endpoints.openneuro_api}/{dataset_id}/snapshots"
     try:
-        resp = requests.get(snapshots_url, timeout=15)
+        resp = requests.get(snapshots_url, timeout=cfg.timeouts.api_listing)
         if resp.status_code != 200:
             log.warning("Cannot list OpenNeuro snapshots for %s (HTTP %d)", dataset_id, resp.status_code)
             return []
@@ -192,9 +195,9 @@ def _list_openneuro_files(dataset_id: str) -> list[dict]:
     if not tag:
         return []
 
-    files_url = f"{OPENNEURO_API}/{dataset_id}/snapshots/{tag}/files"
+    files_url = f"{cfg.api_endpoints.openneuro_api}/{dataset_id}/snapshots/{tag}/files"
     try:
-        resp = requests.get(files_url, timeout=30)
+        resp = requests.get(files_url, timeout=cfg.timeouts.api_request)
         if resp.status_code != 200:
             log.warning("Cannot list OpenNeuro files for %s/%s (HTTP %d)", dataset_id, tag, resp.status_code)
             return []
@@ -217,6 +220,7 @@ def _list_openneuro_files(dataset_id: str) -> list[dict]:
 
 def download_openneuro(dataset_id: str, dest_dir: Path) -> Path:
     """Download all files from the latest snapshot of an OpenNeuro dataset."""
+    cfg = get_config()
     dest_dir.mkdir(parents=True, exist_ok=True)
     files = _list_openneuro_files(dataset_id)
 
@@ -235,7 +239,7 @@ def download_openneuro(dataset_id: str, dest_dir: Path) -> Path:
         log.info("Downloading: %s → %s", fi["url"][:80], dest_path.name)
         try:
             dest_path.parent.mkdir(parents=True, exist_ok=True)
-            with requests.get(fi["url"], stream=True, timeout=300) as resp:
+            with requests.get(fi["url"], stream=True, timeout=cfg.timeouts.download_stream) as resp:
                 resp.raise_for_status()
                 with open(dest_path, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=8192):
@@ -246,7 +250,7 @@ def download_openneuro(dataset_id: str, dest_dir: Path) -> Path:
             if dest_path.exists():
                 dest_path.unlink()
 
-        time.sleep(0.2)
+        time.sleep(cfg.rate_limits.openneuro_delay)
 
     return dest_dir
 
@@ -255,18 +259,16 @@ def download_openneuro(dataset_id: str, dest_dir: Path) -> Path:
 # OMIX / HRA  (Chinese National Genomics Data Center — NGDC / CNCB)
 # ---------------------------------------------------------------------------
 
-OMIX_BASE = "https://ngdc.cncb.ac.cn/omix/release"
-
-
 def _list_omix_files(accession: str) -> list[dict]:
     """Attempt to scrape the file list from an OMIX release page.
 
     Page URL: https://ngdc.cncb.ac.cn/omix/release/{accession}
     The release page usually contains a table of downloadable files.
     """
-    release_url = f"{OMIX_BASE}/{accession}"
+    cfg = get_config()
+    release_url = f"{cfg.api_endpoints.omix_base}/{accession}"
     try:
-        resp = requests.get(release_url, timeout=20,
+        resp = requests.get(release_url, timeout=cfg.timeouts.api_listing,
                             headers={"User-Agent": "KosmosPipeline/1.0"})
         if resp.status_code != 200:
             log.warning("Cannot access OMIX page for %s (HTTP %d)", accession, resp.status_code)
@@ -297,6 +299,7 @@ def _list_omix_files(accession: str) -> list[dict]:
 
 def download_omix(accession: str, dest_dir: Path) -> Path:
     """Download files from an OMIX / HRA (NGDC/CNCB) release."""
+    cfg = get_config()
     dest_dir.mkdir(parents=True, exist_ok=True)
     files = _list_omix_files(accession)
 
@@ -314,7 +317,7 @@ def download_omix(accession: str, dest_dir: Path) -> Path:
 
         log.info("Downloading: %s → %s", fi["url"][:80], dest_path.name)
         try:
-            with requests.get(fi["url"], stream=True, timeout=300,
+            with requests.get(fi["url"], stream=True, timeout=cfg.timeouts.download_stream,
                               headers={"User-Agent": "KosmosPipeline/1.0"}) as resp:
                 resp.raise_for_status()
                 with open(dest_path, "wb") as f:
@@ -326,7 +329,7 @@ def download_omix(accession: str, dest_dir: Path) -> Path:
             if dest_path.exists():
                 dest_path.unlink()
 
-        time.sleep(0.3)
+        time.sleep(cfg.rate_limits.omix_delay)
 
     return dest_dir
 
@@ -335,14 +338,12 @@ def download_omix(accession: str, dest_dir: Path) -> Path:
 # Figshare files
 # ---------------------------------------------------------------------------
 
-FIGSHARE_API = "https://api.figshare.com/v2/articles"
-
-
 def _list_figshare_files(article_id: str) -> list[dict]:
     """Get file list from the Figshare API for a given article ID."""
-    url = f"{FIGSHARE_API}/{article_id}/files"
+    cfg = get_config()
+    url = f"{cfg.api_endpoints.figshare_api}/{article_id}/files"
     try:
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(url, timeout=cfg.timeouts.api_listing)
         if resp.status_code != 200:
             log.warning("Cannot list Figshare files for article %s (HTTP %d)", article_id, resp.status_code)
             return []
@@ -364,6 +365,7 @@ def _list_figshare_files(article_id: str) -> list[dict]:
 
 def download_figshare(article_id: str, dest_dir: Path) -> Path:
     """Download all files from a Figshare article."""
+    cfg = get_config()
     dest_dir.mkdir(parents=True, exist_ok=True)
     files = _list_figshare_files(article_id)
 
@@ -388,7 +390,7 @@ def download_figshare(article_id: str, dest_dir: Path) -> Path:
             dest_path.name,
         )
         try:
-            with requests.get(fi["url"], stream=True, timeout=600) as resp:
+            with requests.get(fi["url"], stream=True, timeout=cfg.timeouts.download_large) as resp:
                 resp.raise_for_status()
                 with open(dest_path, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=8192):
@@ -399,7 +401,7 @@ def download_figshare(article_id: str, dest_dir: Path) -> Path:
             if dest_path.exists():
                 dest_path.unlink()
 
-        time.sleep(0.2)
+        time.sleep(cfg.rate_limits.figshare_delay)
 
     return dest_dir
 
@@ -408,9 +410,6 @@ def download_figshare(article_id: str, dest_dir: Path) -> Path:
 # Dryad files
 # ---------------------------------------------------------------------------
 
-DRYAD_API = "https://datadryad.org/api/v2/datasets"
-
-
 def download_dryad(doi: str, dest_dir: Path) -> Path:
     """Download the dataset archive from Dryad.
 
@@ -418,9 +417,10 @@ def download_dryad(doi: str, dest_dir: Path) -> Path:
         GET /api/v2/datasets/{doi}/download
     which streams the full dataset as a ZIP archive.
     """
+    cfg = get_config()
     dest_dir.mkdir(parents=True, exist_ok=True)
     # Encode the DOI for the URL path (slashes must be preserved for Dryad)
-    download_url = f"{DRYAD_API}/{doi}/download"
+    download_url = f"{cfg.api_endpoints.dryad_api}/{doi}/download"
 
     archive_name = re.sub(r'[^\w.-]', '_', doi) + ".zip"
     dest_path = dest_dir / archive_name
@@ -431,7 +431,7 @@ def download_dryad(doi: str, dest_dir: Path) -> Path:
 
     log.info("Downloading Dryad dataset %s → %s", doi, dest_path.name)
     try:
-        with requests.get(download_url, stream=True, timeout=600,
+        with requests.get(download_url, stream=True, timeout=cfg.timeouts.download_large,
                           headers={"User-Agent": "KosmosPipeline/1.0"},
                           allow_redirects=True) as resp:
             resp.raise_for_status()
@@ -469,6 +469,7 @@ def _download_single_dataset(acc_info: dict, base_dir: Path) -> tuple[str, str |
 
     Returns (accession, None) when the dataset is skipped or unsupported.
     """
+    cfg = get_config()
     role = acc_info.get("role", "primary")
     acc = acc_info.get("accession", "")
     if role == "reanalyzed":
@@ -512,13 +513,14 @@ def download_paper_datasets(paper: dict, base_dir: Path) -> dict:
     Individual dataset downloads within the paper run in parallel.
     Returns a dict mapping accession -> local directory path.
     """
+    cfg = get_config()
     accessions = paper.get("dataset_accession", [])
     results = {}
 
     if not accessions:
         return results
 
-    with ThreadPoolExecutor(max_workers=config.DOWNLOAD_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=cfg.parallelism.download_workers) as pool:
         futures = {
             pool.submit(_download_single_dataset, acc_info, base_dir): acc_info
             for acc_info in accessions
@@ -544,6 +546,7 @@ def download_all(papers: list[dict], datasets_dir: Path) -> dict:
 
     Returns dict mapping DOI -> {accession: local_path}.
     """
+    cfg = get_config()
     datasets_dir.mkdir(parents=True, exist_ok=True)
     all_results = {}
 
@@ -554,7 +557,7 @@ def download_all(papers: list[dict], datasets_dir: Path) -> dict:
         results = download_paper_datasets(paper, paper_dir)
         return doi, results
 
-    with ThreadPoolExecutor(max_workers=config.DOWNLOAD_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=cfg.parallelism.download_workers) as pool:
         futures = {pool.submit(_process_paper, p): p for p in papers}
 
         for future in as_completed(futures):
@@ -576,11 +579,12 @@ def download_all(papers: list[dict], datasets_dir: Path) -> dict:
 
 def _try_europepmc_pdf(pmcid: str) -> str | None:
     """Get PDF URL from Europe PMC for a given PMCID."""
+    cfg = get_config()
     if not pmcid:
         return None
     url = f"https://europepmc.org/backend/ptpmcrender.fcgi?accid={pmcid}&blobtype=pdf"
     try:
-        resp = requests.head(url, timeout=10, allow_redirects=True)
+        resp = requests.head(url, timeout=cfg.timeouts.head_request, allow_redirects=True)
         if resp.status_code == 200:
             ct = resp.headers.get("Content-Type", "")
             if "pdf" in ct:
@@ -592,11 +596,12 @@ def _try_europepmc_pdf(pmcid: str) -> str | None:
 
 def _try_unpaywall_pdf(doi: str) -> str | None:
     """Get open-access PDF URL via Unpaywall API (free, email required)."""
+    cfg = get_config()
     try:
         resp = requests.get(
             f"https://api.unpaywall.org/v2/{doi}",
             params={"email": "kosmos-pipeline@example.com"},
-            timeout=10,
+            timeout=cfg.timeouts.head_request,
         )
         if resp.status_code != 200:
             return None
@@ -613,12 +618,13 @@ def _try_unpaywall_pdf(doi: str) -> str | None:
 
 def _try_doi_redirect_pdf(doi: str) -> str | None:
     """Follow DOI redirect and look for a PDF link on the landing page."""
+    cfg = get_config()
     try:
         # Try requesting PDF content type directly
         resp = requests.get(
             f"https://doi.org/{doi}",
             headers={"Accept": "application/pdf", "User-Agent": "KosmosPipeline/1.0"},
-            timeout=15,
+            timeout=cfg.timeouts.api_listing,
             allow_redirects=True,
         )
         if resp.status_code == 200 and "pdf" in resp.headers.get("Content-Type", ""):
@@ -634,6 +640,7 @@ def download_pdf(doi: str, pmcid: str, dest_path: Path) -> bool:
     Tries in order: Europe PMC, Unpaywall, direct DOI redirect.
     Returns True if successful.
     """
+    cfg = get_config()
     if dest_path.exists():
         log.info("PDF already exists: %s", dest_path.name)
         return True
@@ -653,7 +660,7 @@ def download_pdf(doi: str, pmcid: str, dest_path: Path) -> bool:
         resp = requests.get(
             pdf_url,
             headers={"User-Agent": "KosmosPipeline/1.0"},
-            timeout=60,
+            timeout=cfg.timeouts.pdf_download,
             allow_redirects=True,
         )
         resp.raise_for_status()
@@ -692,10 +699,11 @@ def download_pdfs(papers: list[dict], pdfs_dir: Path) -> dict:
 
     Returns dict mapping DOI -> {"path": str, "downloaded": bool}.
     """
+    cfg = get_config()
     pdfs_dir.mkdir(parents=True, exist_ok=True)
     results = {}
 
-    with ThreadPoolExecutor(max_workers=config.DOWNLOAD_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=cfg.parallelism.download_workers) as pool:
         futures = {
             pool.submit(_download_single_pdf, paper, pdfs_dir): paper
             for paper in papers

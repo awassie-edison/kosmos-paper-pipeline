@@ -12,43 +12,52 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from kosmos_pipeline.config import DOWNLOAD_WORKERS
+from .config import get_config
 
 log = logging.getLogger(__name__)
 
-DEFAULT_KOSMOS_OPT_DIR = Path.home() / "kosmos-opt"
 
-RUN_YAML_TEMPLATE = """\
-data_entry: "{data_entry}"
-primary_objective: objective.txt
-dataset_description: description.txt
-num_steps: 20
-stage: {stage}
-run_tardigrade: false
+def _default_kosmos_opt_dir() -> Path:
+    return Path.home() / "kosmos-opt"
 
-kosmos_config:
-  enable_literature_research: false
-"""
+
+def _run_yaml_template() -> str:
+    cfg = get_config()
+    return (
+        'data_entry: "{data_entry}"\n'
+        'primary_objective: objective.txt\n'
+        'dataset_description: description.txt\n'
+        f'num_steps: {cfg.upload.num_steps}\n'
+        'stage: {stage}\n'
+        f'run_tardigrade: {"true" if cfg.upload.run_tardigrade else "false"}\n'
+        '\n'
+        'kosmos_config:\n'
+        f'  enable_literature_research: {"true" if cfg.upload.enable_literature_research else "false"}\n'
+    )
 
 
 def upload_to_edison(
     data_dir: Path,
     name: str,
     stage: str = "DEV",
-    kosmos_opt_dir: Path = DEFAULT_KOSMOS_OPT_DIR,
+    kosmos_opt_dir: Path | None = None,
 ) -> str:
     """Upload a single dataset to Edison.
 
     Runs: python -m kopt.probe.upload <data_dir> --name <name> --stage <stage>
     Returns the full stdout from the upload command.
     """
+    cfg = get_config()
+    if kosmos_opt_dir is None:
+        kosmos_opt_dir = _default_kosmos_opt_dir()
+
     if not data_dir.exists():
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
     if not kosmos_opt_dir.exists():
         raise FileNotFoundError(
             f"kosmos-opt directory not found: {kosmos_opt_dir}. "
-            "Clone the repo or set --kosmos-opt-dir."
+            "Clone the repo or set kosmos_opt_dir in config.yaml."
         )
 
     cmd = [
@@ -65,7 +74,7 @@ def upload_to_edison(
         cwd=str(kosmos_opt_dir),
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=cfg.timeouts.upload_command,
     )
 
     if result.returncode != 0:
@@ -106,7 +115,7 @@ def upload_all(
     datasets_dir: Path,
     probes_dir: Path,
     stage: str = "DEV",
-    kosmos_opt_dir: Path = DEFAULT_KOSMOS_OPT_DIR,
+    kosmos_opt_dir: Path | None = None,
 ) -> dict:
     """Upload all downloaded datasets to Edison and write run.yaml per paper.
 
@@ -120,6 +129,10 @@ def upload_all(
     Returns:
         Dict mapping DOI → upload result with data_entry URI.
     """
+    cfg = get_config()
+    if kosmos_opt_dir is None:
+        kosmos_opt_dir = _default_kosmos_opt_dir()
+
     probes_dir.mkdir(parents=True, exist_ok=True)
     results = {}
 
@@ -143,7 +156,7 @@ def upload_all(
             # Write run.yaml only — other probe files come from probe generation pipeline
             probe_dir = probes_dir / name
             probe_dir.mkdir(parents=True, exist_ok=True)
-            run_yaml = RUN_YAML_TEMPLATE.format(data_entry=data_entry, stage=stage)
+            run_yaml = _run_yaml_template().format(data_entry=data_entry, stage=stage)
             (probe_dir / "run.yaml").write_text(run_yaml)
             log.info("Wrote %s/run.yaml (data_entry: %s)", probe_dir.name, data_entry)
 
@@ -158,7 +171,7 @@ def upload_all(
             log.exception("Upload failed for %s", doi)
             return doi, {"status": "failed", "name": name, "error": str(e)}
 
-    with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=cfg.parallelism.download_workers) as executor:
         futures = {
             executor.submit(_process_paper, paper): paper
             for paper in papers

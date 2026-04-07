@@ -9,7 +9,7 @@ import logging
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from . import config
+from .config import get_config
 
 log = logging.getLogger(__name__)
 
@@ -24,25 +24,26 @@ def is_script_file(filepath: str) -> bool:
     4. File in a script directory with no recognized data extension → exclude
     5. Otherwise → keep
     """
+    cfg = get_config()
     parts = PurePosixPath(filepath).parts
     name_lower = parts[-1].lower() if parts else filepath.lower()
     suffix = PurePosixPath(name_lower).suffix
 
     # 1. Known data extension — never filter
-    if suffix in config.DATA_EXTENSIONS:
+    if suffix in cfg.script_filtering.data_extensions:
         return False
 
     # 2. Exact filename match
-    if name_lower in config.SCRIPT_FILENAMES:
+    if name_lower in cfg.script_filtering.script_filenames:
         return True
 
     # 3. Script extension match
-    if suffix in config.SCRIPT_EXTENSIONS:
+    if suffix in cfg.script_filtering.script_extensions:
         return True
 
     # 4. Directory-based: only for files without a recognized data extension
     for part in parts[:-1]:
-        if part.lower() in config.SCRIPT_DIRECTORIES:
+        if part.lower() in cfg.script_filtering.script_directories:
             return True
 
     return False

@@ -1,0 +1,426 @@
+# Pipeline settings
+pipeline:
+  model: claude-opus-4-6
+  max_candidates: 150
+  max_papers: 20
+  date_window_months: 6
+  output_dir: null
+  kosmos_opt_dir: null
+  exclude_dois_file: null
+  stage: DEV
+
+# Scoring thresholds
+thresholds:
+  max_data_size_gb: 15.0
+  max_datasets_per_paper: 5
+  min_quality_score: 3.0
+  min_domains: 4
+  tier_2_penalty: 0.5
+
+# Journal tier configuration
+journals:
+  tier_1:
+  - cell
+  - cell genomics
+  - cell metabolism
+  - cell reports
+  - cell stem cell
+  - cell systems
+  - elife
+  - embo reports
+  - genome biology
+  - genome research
+  - molecular cell
+  - nature
+  - nature biotechnology
+  - nature cell biology
+  - nature chemical biology
+  - nature communications
+  - nature ecology & evolution
+  - nature genetics
+  - nature medicine
+  - nature methods
+  - nature neuroscience
+  - nature structural & molecular biology
+  - nucleic acids research
+  - plos computational biology
+  - plos genetics
+  - proceedings of the national academy of sciences
+  - science
+  - science advances
+  - the embo journal
+  tier_2:
+  - advanced science
+  - advanced science (weinheim, baden-wurttemberg, germany)
+  - bioinformatics
+  - bioinformatics (oxford, england)
+  - bmc bioinformatics
+  - bmc genomics
+  - briefings in bioinformatics
+  - cell reports methods
+  - cells
+  - communications biology
+  - frontiers in cell and developmental biology
+  - frontiers in genetics
+  - frontiers in immunology
+  - frontiers in neuroscience
+  - gigascience
+  - iscience
+  - molecular systems biology
+  - nar genomics and bioinformatics
+  - npj systems biology and applications
+  - plos one
+  - scientific reports
+  priority:
+    nature: 0
+    science: 0
+    cell: 0
+    nature genetics: 1
+    nature neuroscience: 1
+    nature medicine: 1
+    nature cell biology: 1
+    nature methods: 1
+    nature biotechnology: 1
+    cell genomics: 1
+    cell systems: 1
+    cell reports: 1
+    molecular cell: 1
+    cell stem cell: 1
+    cell metabolism: 1
+    science advances: 2
+    nature communications: 2
+    genome biology: 2
+    genome research: 2
+    elife: 3
+    the embo journal: 3
+    embo reports: 3
+    proceedings of the national academy of sciences: 3
+    nucleic acids research: 4
+    plos genetics: 4
+    plos computational biology: 5
+
+# Data modality tiers
+modalities:
+  tier_1:
+  - crop-seq
+  - multiome
+  - perturb-seq
+  - scatac-seq
+  - scrna-seq
+  - snrna-seq
+  - spatial transcriptomics
+  tier_2:
+  - bulk rna-seq
+  - chip-seq
+  - cut&run
+  - cut&tag
+  - exome sequencing
+  - hi-c
+  - metabolomics
+  - metagenomics
+  - phosphoproteomics
+  - proteomics
+  - whole-genome sequencing
+
+# Search queries
+search:
+  europepmc_queries:
+  - name: query1_nature_science_cell
+    text: (JOURNAL:"Nature" OR JOURNAL:"Science" OR JOURNAL:"Cell" OR JOURNAL:"Nature Genetics" OR JOURNAL:"Nature Methods"
+      OR JOURNAL:"Nature Biotechnology" OR JOURNAL:"Nature Communications" OR JOURNAL:"eLife" OR JOURNAL:"Genome Biology"
+      OR JOURNAL:"Genome Research") AND (computational OR bioinformatic OR integrative analysis) AND (dataset OR GEO OR accession
+      OR deposited)
+  - name: query2_cell_sub_plos_pnas
+    text: (JOURNAL:"Molecular Cell" OR JOURNAL:"Cell Systems" OR JOURNAL:"Cell Reports" OR JOURNAL:"Cell Genomics" OR JOURNAL:"PLOS
+      Computational Biology" OR JOURNAL:"PLOS Genetics" OR JOURNAL:"Nucleic Acids Research" OR JOURNAL:"Proceedings of the
+      National Academy of Sciences") AND (computational OR bioinformatic OR systematic analysis) AND (dataset OR publicly
+      available OR repository)
+  - name: query3_nature_sub
+    text: (JOURNAL:"Nature Neuroscience" OR JOURNAL:"Nature Medicine" OR JOURNAL:"Nature Cell Biology" OR JOURNAL:"Nature
+      Biotechnology" OR JOURNAL:"Nature Methods") AND (analysis OR computational OR modeling) AND (data OR dataset OR sequencing)
+  - name: query4_singlecell_spatial
+    text: (single-cell OR spatial transcriptomics OR multi-omics OR single-nucleus) AND (mechanism OR model OR pathogenesis
+      OR reveals)
+  - name: query5_disease
+    text: (cancer genomics OR neurodegeneration OR immune OR developmental biology) AND (computational framework OR integrative
+      analysis OR systematic characterization) AND (GEO OR accession OR Zenodo OR deposited)
+  - name: query6_evo_struct_systems
+    text: (evolutionary OR phylogenomic OR structural biology OR systems biology OR gene regulatory network) AND (computational
+      OR modeling OR simulation) AND (dataset OR publicly available)
+  - name: query7_tier2_strong_datasets
+    text: (single-cell RNA-seq OR snRNA-seq OR spatial transcriptomics OR ATAC-seq OR multi-omics) AND (GEO OR accession OR
+      deposited OR Zenodo)
+  pubmed_query_term: (computational biology[MeSH] OR genomics[MeSH] OR systems biology[MeSH]) AND (Nature[journal] OR Science[journal]
+    OR Cell[journal] OR eLife[journal] OR Genome Biol[journal] OR Nat Genet[journal] OR Nat Methods[journal] OR PLoS Comput
+    Biol[journal] OR Genome Res[journal] OR Mol Cell[journal] OR Nat Commun[journal] OR Nucleic Acids Res[journal] OR Proc
+    Natl Acad Sci[journal] OR Nat Neurosci[journal] OR Nat Med[journal] OR Nat Cell Biol[journal] OR Sci Adv[journal] OR Cells[journal])
+    AND (open access[filter])
+
+# Claude evaluation settings
+evaluation:
+  max_tokens: 16384
+  system_prompt: |
+    You are an expert computational biology reviewer evaluating papers for the Kosmos AI benchmarking pipeline. Your task is to assess whether a paper is suitable for generating benchmark probes.
+
+    A good benchmark paper has:
+    1. A sequential chain of 3+ computational analysis steps where each finding motivates the next, building toward an impactful conclusion.
+    2. The entire hypothesis chain is reproducible from publicly deposited datasets.
+    3. The deposited data is openly accessible and <15 GB total.
+
+    ## Evaluation criteria
+
+    ### Sub-criterion 1: Sequential Computational Hypothesis Chain (weight 40%)
+    - Must have 3+ computational steps that build on each other.
+    - Entirely computational chains score highest.
+    - Mostly computational (1-2 wet-lab steps as context) is acceptable.
+    - Mixed wet-lab/computational: low marks — likely exclude.
+
+    EXCLUDE these paper types:
+    - Descriptive atlases/catalogs without mechanistic conclusions
+    - Method/tool/pipeline papers
+    - Parallel independent analyses that don't build on each other
+    - Papers ending with observations rather than an integrated model
+    - Primarily comparative studies without unifying conclusions
+    - Resource papers, review articles, perspectives
+
+    ### Sub-criterion 2: Dataset Reproducibility (weight 35%)
+    - What fraction of the hypothesis chain can be reproduced from deposited data?
+    - How many main figures are derived from deposited data?
+    - All datasets must be fully public (NO controlled access, NO data use agreements).
+    - Total data <15 GB, ≤5 distinct datasets.
+    - 100% reproducible = full marks, 80-99% = good, <80% = likely exclude.
+
+    IMPORTANT — classify each dataset's role:
+    - "primary": Data generated by THIS paper's authors as part of this study.
+    - "reanalyzed_key": Data from another study, but ESSENTIAL to the paper's main results — e.g., a public dataset that is deeply integrated into the hypothesis chain, contributes to key figures, or is required to reproduce the core findings. These will be downloaded.
+    - "reanalyzed": Data from another study used only for minor comparison, validation, or context. These are listed but NOT downloaded.
+    The size limit and dataset count apply to primary + reanalyzed_key datasets combined (since both are downloaded).
+
+    ### Sub-criterion 3: Data Modality (weight 10%)
+    Tier 1 (preferred): scRNA-seq, snRNA-seq, spatial transcriptomics, scATAC-seq, multiome, CRISPR screens.
+    Tier 2 (acceptable): bulk RNA-seq, proteomics, ChIP-seq, Hi-C, WGS/WES, metagenomics.
+    Multi-modal datasets get a bonus.
+
+    ### Sub-criterion 4: Open Access License (weight 5%)
+    CC-BY preferred; CC-BY-NC acceptable.
+
+    ### Sub-criterion 5: Figures from Dataset (weight 10%)
+    Higher fraction of main figures derived from deposited data = higher score.
+    Papers where <50% of figures come from deposited data are poor candidates.
+
+    ## Scoring
+    5 = Ideal benchmark paper (fully computational chain, 100% reproducible, tier 1 modality)
+    4 = Strong candidate (3+ steps, ≥80% reproducible, minor limitations)
+    3 = Acceptable (meets hard requirements, may have mixed steps or tier 2 journal)
+    2 = Marginal — DO NOT INCLUDE
+    1 = Below threshold — DO NOT INCLUDE
+
+    Only papers scoring ≥3 should be included.
+
+# Parallelism (thread pool sizes)
+parallelism:
+  search_workers: 8
+  eval_workers: 10
+  size_check_workers: 15
+  download_workers: 4
+
+# Rate limiting (seconds between requests)
+rate_limits:
+  europepmc_delay: 0.1
+  pubmed_delay: 0.35
+  geo_delay: 0.2
+  zenodo_delay: 0.2
+  claude_api_delay: 0.5
+  openneuro_delay: 0.2
+  omix_delay: 0.3
+  figshare_delay: 0.2
+  dryad_delay: 0.0
+
+# API endpoints
+api_endpoints:
+  europepmc_base: https://www.ebi.ac.uk/europepmc/webservices/rest/search
+  europepmc_fulltext: https://www.ebi.ac.uk/europepmc/webservices/rest
+  pubmed_eutils: https://eutils.ncbi.nlm.nih.gov/entrez/eutils
+  geo_query: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi
+  geo_ftp_base: https://ftp.ncbi.nlm.nih.gov/geo/series
+  zenodo_api: https://zenodo.org/api/records
+  openneuro_api: https://openneuro.org/crn/datasets
+  figshare_api: https://api.figshare.com/v2/articles
+  dryad_api: https://datadryad.org/api/v2/datasets
+  omix_base: https://ngdc.cncb.ac.cn/omix/release
+
+# HTTP timeouts (seconds)
+timeouts:
+  api_request: 30
+  api_listing: 15
+  download_stream: 300
+  download_large: 600
+  head_request: 10
+  pdf_download: 60
+  upload_command: 600
+
+# Script filtering (prevent answer leakage)
+script_filtering:
+  data_extensions:
+  - .7z
+  - .arrow
+  - .bam
+  - .bcf
+  - .bdf
+  - .bed
+  - .bedgraph
+  - .bigwig
+  - .bw
+  - .bz2
+  - .cel
+  - .cram
+  - .csv
+  - .db
+  - .edf
+  - .fa
+  - .fasta
+  - .fastq
+  - .fcs
+  - .fdt
+  - .feather
+  - .fq
+  - .gff
+  - .gff3
+  - .gtf
+  - .gz
+  - .h5
+  - .h5ad
+  - .hdf5
+  - .idat
+  - .joblib
+  - .jpeg
+  - .jpg
+  - .json
+  - .loom
+  - .mgf
+  - .mgh
+  - .mgz
+  - .mtx
+  - .mzml
+  - .mzxml
+  - .nii
+  - .npy
+  - .npz
+  - .parquet
+  - .pdf
+  - .pickle
+  - .pkl
+  - .png
+  - .rar
+  - .raw
+  - .rda
+  - .rdata
+  - .rds
+  - .sam
+  - .set
+  - .sqlite
+  - .svg
+  - .tab
+  - .tar
+  - .tif
+  - .tiff
+  - .tsv
+  - .txt
+  - .vcf
+  - .wig
+  - .xls
+  - .xlsx
+  - .xml
+  - .xz
+  - .yaml
+  - .yml
+  - .zip
+  script_extensions:
+  - .bash
+  - .csh
+  - .cwl
+  - .groovy
+  - .ipynb
+  - .jl
+  - .m
+  - .nf
+  - .pl
+  - .pm
+  - .py
+  - .qmd
+  - .r
+  - .rmd
+  - .sh
+  - .smk
+  - .wdl
+  - .zsh
+  script_filenames:
+  - .dockerignore
+  - .gitignore
+  - conda_env.yaml
+  - conda_env.yml
+  - dockerfile
+  - environment.yaml
+  - environment.yml
+  - jenkinsfile
+  - makefile
+  - nextflow.config
+  - packrat.lock
+  - pyproject.toml
+  - rakefile
+  - renv.lock
+  - requirements.txt
+  - setup.cfg
+  - setup.py
+  - snakefile
+  - snakemake
+  script_directories:
+  - .snakemake
+  - analyses
+  - analysis
+  - code
+  - codes
+  - notebook
+  - notebooks
+  - pipeline
+  - pipelines
+  - script
+  - scripts
+  - source
+  - src
+  - workflow
+  - workflows
+
+# Article-type filtering patterns
+filtering:
+  exclude_type_patterns:
+  - \breview\b
+  - \bperspective\b
+  - \beditorial\b
+  - \bcommentary\b
+  - \bcorrespondence\b
+  - \bletter to the editor\b
+  - \berratum\b
+  - \bcorrigendum\b
+  - \bretraction\b
+  exclude_tool_patterns:
+  - \ba (?:tool|package|pipeline|framework|platform|software|database|resource) for\b
+  - \bwe (?:present|introduce|develop|describe) (?:a |an )?(?:new |novel )?(?:tool|method|package|pipeline|software)\b
+  excluded_pub_types:
+  - comment
+  - commentary
+  - correspondence
+  - corrigendum
+  - editorial
+  - erratum
+  - letter
+  - retracted publication
+  - retraction
+  - review
+  - review-article
+
+# Edison upload settings
+upload:
+  num_steps: 20
+  run_tardigrade: false
+  enable_literature_research: false

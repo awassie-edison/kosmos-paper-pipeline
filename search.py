@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 import requests
 
-from . import config
+from .config import get_config
 
 log = logging.getLogger(__name__)
 
@@ -18,10 +18,11 @@ log = logging.getLogger(__name__)
 
 def _epmc_query_url(query_text: str, start: str, end: str) -> str:
     """Build a Europe PMC REST URL."""
+    cfg = get_config()
     date_range = f"[{start} TO {end}]"
     q = f"{query_text} AND OPEN_ACCESS:y AND (FIRST_PDATE:{date_range})"
     return (
-        f"{config.EUROPEPMC_BASE}"
+        f"{cfg.api_endpoints.europepmc_base}"
         f"?query={quote(q)}"
         f"&resultType=core&pageSize=100&format=json"
     )
@@ -29,97 +30,22 @@ def _epmc_query_url(query_text: str, start: str, end: str) -> str:
 
 def build_europepmc_queries(start: str, end: str) -> list[dict]:
     """Return list of {name, url} dicts for all Europe PMC search queries."""
-    queries = [
-        {
-            "name": "query1_nature_science_cell",
-            "text": (
-                '(JOURNAL:"Nature" OR JOURNAL:"Science" OR JOURNAL:"Cell" '
-                'OR JOURNAL:"Nature Genetics" OR JOURNAL:"Nature Methods" '
-                'OR JOURNAL:"Nature Biotechnology" OR JOURNAL:"Nature Communications" '
-                'OR JOURNAL:"eLife" OR JOURNAL:"Genome Biology" OR JOURNAL:"Genome Research") '
-                "AND (computational OR bioinformatic OR integrative analysis) "
-                "AND (dataset OR GEO OR accession OR deposited)"
-            ),
-        },
-        {
-            "name": "query2_cell_sub_plos_pnas",
-            "text": (
-                '(JOURNAL:"Molecular Cell" OR JOURNAL:"Cell Systems" '
-                'OR JOURNAL:"Cell Reports" OR JOURNAL:"Cell Genomics" '
-                'OR JOURNAL:"PLOS Computational Biology" OR JOURNAL:"PLOS Genetics" '
-                'OR JOURNAL:"Nucleic Acids Research" '
-                'OR JOURNAL:"Proceedings of the National Academy of Sciences") '
-                "AND (computational OR bioinformatic OR systematic analysis) "
-                "AND (dataset OR publicly available OR repository)"
-            ),
-        },
-        {
-            "name": "query3_nature_sub",
-            "text": (
-                '(JOURNAL:"Nature Neuroscience" OR JOURNAL:"Nature Medicine" '
-                'OR JOURNAL:"Nature Cell Biology" OR JOURNAL:"Nature Biotechnology" '
-                'OR JOURNAL:"Nature Methods") '
-                "AND (analysis OR computational OR modeling) "
-                "AND (data OR dataset OR sequencing)"
-            ),
-        },
-        {
-            "name": "query4_singlecell_spatial",
-            "text": (
-                "(single-cell OR spatial transcriptomics OR multi-omics OR single-nucleus) "
-                "AND (mechanism OR model OR pathogenesis OR reveals)"
-            ),
-        },
-        {
-            "name": "query5_disease",
-            "text": (
-                "(cancer genomics OR neurodegeneration OR immune OR developmental biology) "
-                "AND (computational framework OR integrative analysis OR systematic characterization) "
-                "AND (GEO OR accession OR Zenodo OR deposited)"
-            ),
-        },
-        {
-            "name": "query6_evo_struct_systems",
-            "text": (
-                "(evolutionary OR phylogenomic OR structural biology OR systems biology "
-                "OR gene regulatory network) "
-                "AND (computational OR modeling OR simulation) "
-                "AND (dataset OR publicly available)"
-            ),
-        },
-        {
-            "name": "query7_tier2_strong_datasets",
-            "text": (
-                "(single-cell RNA-seq OR snRNA-seq OR spatial transcriptomics "
-                "OR ATAC-seq OR multi-omics) "
-                "AND (GEO OR accession OR deposited OR Zenodo)"
-            ),
-        },
-    ]
+    cfg = get_config()
     return [
-        {"name": q["name"], "url": _epmc_query_url(q["text"], start, end)}
-        for q in queries
+        {"name": q.name, "url": _epmc_query_url(q.text, start, end)}
+        for q in cfg.search.europepmc_queries
     ]
 
 
 def build_pubmed_query(start: str, end: str) -> dict:
     """Build the PubMed E-utilities query."""
+    cfg = get_config()
     # Convert YYYY-MM-DD to YYYY/MM/DD for PubMed
     s = start.replace("-", "/")
     e = end.replace("-", "/")
-    term = (
-        "(computational biology[MeSH] OR genomics[MeSH] OR systems biology[MeSH]) "
-        "AND (Nature[journal] OR Science[journal] OR Cell[journal] OR eLife[journal] "
-        "OR Genome Biol[journal] OR Nat Genet[journal] OR Nat Methods[journal] "
-        "OR PLoS Comput Biol[journal] OR Genome Res[journal] OR Mol Cell[journal] "
-        "OR Nat Commun[journal] OR Nucleic Acids Res[journal] "
-        "OR Proc Natl Acad Sci[journal] OR Nat Neurosci[journal] "
-        "OR Nat Med[journal] OR Nat Cell Biol[journal] OR Sci Adv[journal] "
-        "OR Cells[journal]) "
-        f"AND (open access[filter]) AND ({s}:{e}[pdat])"
-    )
+    term = f"{cfg.search.pubmed_query_term} AND ({s}:{e}[pdat])"
     url = (
-        f"{config.PUBMED_EUTILS}/esearch.fcgi"
+        f"{cfg.api_endpoints.pubmed_eutils}/esearch.fcgi"
         f"?db=pubmed&term={quote(term)}&retmax=200&retmode=json"
     )
     return {"name": "query8_pubmed", "url": url}
@@ -131,8 +57,9 @@ def build_pubmed_query(start: str, end: str) -> dict:
 
 def _fetch_one(name: str, url: str) -> dict:
     """Fetch a single query URL and return parsed JSON with metadata."""
+    cfg = get_config()
     log.info("Searching: %s", name)
-    resp = requests.get(url, timeout=30)
+    resp = requests.get(url, timeout=cfg.timeouts.api_request)
     resp.raise_for_status()
     return {"name": name, "data": resp.json()}
 
@@ -181,11 +108,12 @@ def run_search(start_date: str, end_date: str) -> list[dict]:
 
     Returns a list of paper dicts with at minimum {doi, title, journal, ...}.
     """
+    cfg = get_config()
     queries = build_europepmc_queries(start_date, end_date)
     queries.append(build_pubmed_query(start_date, end_date))
 
     raw_results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=config.SEARCH_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=cfg.parallelism.search_workers) as pool:
         futures = {
             pool.submit(_fetch_one, q["name"], q["url"]): q["name"]
             for q in queries

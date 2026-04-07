@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 
 from . import config
+from .config import get_config
 from .status import StatusTracker
 
 log = logging.getLogger("kosmos_pipeline")
@@ -74,19 +75,15 @@ def _load_exclude_dois(path: str | None) -> set[str]:
 # ---------------------------------------------------------------------------
 
 def run_pipeline(
-    output_dir: str,
     resume: bool = True,
-    max_candidates: int = config.MAX_CANDIDATES_TO_EVALUATE,
-    max_papers: int = config.MAX_PAPERS_OUTPUT,
-    model: str = config.DEFAULT_MODEL,
-    exclude_dois_file: str | None = None,
+    review: bool = False,
     skip_download: bool = False,
     skip_upload: bool = False,
-    review: bool = False,
-    stage: str = "DEV",
-    kosmos_opt_dir: str | None = None,
 ):
     """Run the full paper search and curation pipeline."""
+    cfg = get_config()
+
+    output_dir = cfg.pipeline.output_dir or f"./runs/{date.today().isoformat()}"
     run_dir = Path(output_dir)
     intermediate = run_dir / "intermediate"
     intermediate.mkdir(parents=True, exist_ok=True)
@@ -101,7 +98,7 @@ def run_pipeline(
     upload_results: dict = {}
 
     # Load exclude DOIs
-    exclude_dois = _load_exclude_dois(exclude_dois_file)
+    exclude_dois = _load_exclude_dois(cfg.pipeline.exclude_dois_file)
 
     # ------------------------------------------------------------------
     # STEP 1: Search
@@ -143,6 +140,7 @@ def run_pipeline(
         })
 
     # Cap candidates for evaluation
+    max_candidates = cfg.pipeline.max_candidates
     candidates_to_eval = candidates[:max_candidates]
     log.info(
         "Evaluating top %d of %d candidates",
@@ -162,7 +160,7 @@ def run_pipeline(
             "total_candidates": len(candidates_to_eval),
         })
         from .evaluate import evaluate_papers
-        evaluated = evaluate_papers(candidates_to_eval, model=model)
+        evaluated = evaluate_papers(candidates_to_eval)
         _save(evaluated, step3_path)
         status.update("step3_evaluate", "Evaluation complete", {
             "evaluated": len(candidates_to_eval),
@@ -193,6 +191,7 @@ def run_pipeline(
     # ------------------------------------------------------------------
     status.update("step4_score", "Scoring and applying diversity adjustment...")
     from .score import score_and_rank
+    max_papers = cfg.pipeline.max_papers
     final_papers = score_and_rank(verified, max_papers=max_papers)
     _save(final_papers, intermediate / "step4_scored.json")
     status.update("step4_score", "Scoring complete", {
@@ -250,7 +249,7 @@ def run_pipeline(
             print(f"     Datasets: {', '.join(acc)} ({p.get('estimated_processed_data_size_gb', '?')} GB)")
         print(f"\n{'=' * 70}")
         print(f"  Edit {output_file} to remove unwanted papers, then continue.")
-        print(f"  To resume: python -m kosmos_pipeline -o {output_dir}")
+        print(f"  To resume: python -m kosmos_pipeline run --config <config.yaml>")
         print(f"{'=' * 70}\n")
 
         try:
@@ -303,17 +302,19 @@ def run_pipeline(
     # ------------------------------------------------------------------
     # STEP 7: Upload to Edison (optional)
     # ------------------------------------------------------------------
+    stage = cfg.pipeline.stage
+    kosmos_opt_dir = cfg.pipeline.kosmos_opt_dir
     if not skip_upload and not skip_download:
         kopt_dir = Path(kosmos_opt_dir) if kosmos_opt_dir else None
         status.update("step7_upload", f"Uploading {len(final_papers)} datasets to Edison...")
-        from .upload import upload_all, DEFAULT_KOSMOS_OPT_DIR
+        from .upload import upload_all, _default_kosmos_opt_dir
         probes_dir = run_dir / "probes"
         upload_results = upload_all(
             final_papers,
             datasets_dir=run_dir / "datasets",
             probes_dir=probes_dir,
             stage=stage,
-            kosmos_opt_dir=kopt_dir or DEFAULT_KOSMOS_OPT_DIR,
+            kosmos_opt_dir=kopt_dir or _default_kosmos_opt_dir(),
         )
         _save(upload_results, intermediate / "step7_upload_results.json")
         status.update("step7_upload", "Uploads complete", upload_results)
@@ -399,89 +400,78 @@ def parse_args(argv=None):
         prog="kosmos_pipeline",
         description="Kosmos benchmark paper search and curation pipeline",
     )
-    p.add_argument(
-        "--output-dir", "-o",
-        default=f"./runs/{date.today().isoformat()}",
-        help="Output directory for this run (default: ./runs/YYYY-MM-DD)",
+    sub = p.add_subparsers(dest="command")
+
+    # --- run subcommand (default) ---
+    run_parser = sub.add_parser("run", help="Run the pipeline")
+    run_parser.add_argument(
+        "--config", "-c",
+        help="Path to config.yaml (uses defaults if omitted)",
     )
-    p.add_argument(
+    run_parser.add_argument(
         "--no-resume",
         action="store_true",
         help="Do not resume from checkpoints — start fresh",
     )
-    p.add_argument(
-        "--max-candidates",
-        type=int,
-        default=config.MAX_CANDIDATES_TO_EVALUATE,
-        help=f"Max candidates to evaluate via Claude API (default: {config.MAX_CANDIDATES_TO_EVALUATE})",
-    )
-    p.add_argument(
-        "--max-papers",
-        type=int,
-        default=config.MAX_PAPERS_OUTPUT,
-        help=f"Max papers in final output (default: {config.MAX_PAPERS_OUTPUT})",
-    )
-    p.add_argument(
-        "--model",
-        default=config.DEFAULT_MODEL,
-        help=f"Claude model for evaluation (default: {config.DEFAULT_MODEL})",
-    )
-    p.add_argument(
-        "--exclude-dois",
-        help="File with DOIs to exclude (one per line, or .xlsx)",
-    )
-    p.add_argument(
+    run_parser.add_argument(
         "--review",
         action="store_true",
         help="Pause after paper selection to review before downloading/uploading",
     )
-    p.add_argument(
+    run_parser.add_argument(
         "--skip-download",
         action="store_true",
         help="Skip dataset download step",
     )
-    p.add_argument(
+    run_parser.add_argument(
         "--skip-upload",
         action="store_true",
         help="Skip Edison upload step",
     )
-    p.add_argument(
-        "--stage",
-        default="DEV",
-        choices=["DEV", "STAGING", "PROD"],
-        help="Edison environment stage (default: DEV)",
-    )
-    p.add_argument(
-        "--kosmos-opt-dir",
-        help=f"Path to kosmos-opt repo (default: ~/kosmos-opt)",
-    )
-    p.add_argument(
+    run_parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging",
     )
-    return p.parse_args(argv)
+
+    # --- init subcommand ---
+    init_parser = sub.add_parser("init", help="Generate a default config.yaml")
+    init_parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Directory to write config.yaml into (default: current directory)",
+    )
+
+    return p, p.parse_args(argv)
 
 
 def main(argv=None):
-    args = parse_args(argv)
+    parser, args = parse_args(argv)
 
+    # Default to 'run' if no subcommand given
+    command = args.command or "run"
+
+    if command == "init":
+        out_dir = Path(args.directory)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "config.yaml"
+        out_path.write_text(config.generate_default_yaml())
+        print(f"Wrote default config to {out_path}")
+        return
+
+    # --- run ---
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
         datefmt="%H:%M:%S",
     )
 
+    config.init_config(args.config)
+
     run_pipeline(
-        output_dir=args.output_dir,
         resume=not args.no_resume,
-        max_candidates=args.max_candidates,
-        max_papers=args.max_papers,
-        model=args.model,
-        exclude_dois_file=args.exclude_dois,
+        review=args.review,
         skip_download=args.skip_download,
         skip_upload=args.skip_upload,
-        review=args.review,
-        stage=args.stage,
-        kosmos_opt_dir=args.kosmos_opt_dir,
     )

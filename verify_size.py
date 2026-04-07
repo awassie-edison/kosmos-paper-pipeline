@@ -1,7 +1,7 @@
 """Step 3.5: Verify actual dataset sizes via GEO FTP and Zenodo API.
 
 Replaces the prompt-estimated sizes with real numbers, and removes papers
-whose total dataset size exceeds MAX_DATA_SIZE_GB.
+whose total dataset size exceeds the configured maximum.
 """
 
 import logging
@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from bs4 import BeautifulSoup
 
-from . import config
+from .config import get_config
 
 log = logging.getLogger(__name__)
 
@@ -25,8 +25,9 @@ def _gse_ftp_url(accession: str) -> str:
 
     GSE196018 → https://ftp.ncbi.nlm.nih.gov/geo/series/GSE196nnn/GSE196018/suppl/
     """
+    cfg = get_config()
     prefix = accession[:-3] + "nnn"
-    return f"{config.GEO_FTP_BASE}/{prefix}/{accession}/suppl/"
+    return f"{cfg.api_endpoints.geo_ftp_base}/{prefix}/{accession}/suppl/"
 
 
 def get_geo_size(accession: str) -> float:
@@ -35,12 +36,13 @@ def get_geo_size(accession: str) -> float:
     Parses the FTP directory listing (served as HTML) for file sizes.
     Falls back to 0.0 if the listing is unavailable.
     """
+    cfg = get_config()
     if not accession.upper().startswith("GSE"):
         return 0.0
 
     url = _gse_ftp_url(accession.upper())
     try:
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(url, timeout=cfg.timeouts.api_listing)
         if resp.status_code != 200:
             log.warning("GEO FTP listing unavailable for %s (HTTP %d)", accession, resp.status_code)
             return 0.0
@@ -80,8 +82,9 @@ def get_geo_size(accession: str) -> float:
 
 def _try_head_request(url: str) -> float:
     """Issue HEAD request and return Content-Length in GB, or 0."""
+    cfg = get_config()
     try:
-        resp = requests.head(url, timeout=10, allow_redirects=True)
+        resp = requests.head(url, timeout=cfg.timeouts.head_request, allow_redirects=True)
         cl = resp.headers.get("Content-Length")
         if cl:
             return int(cl) / 1e9
@@ -102,6 +105,7 @@ def get_zenodo_size(accession: str) -> float:
       - "14031498"                  (record ID)
       - "zenodo.org/record/14031498"
     """
+    cfg = get_config()
     # Extract numeric record ID
     record_id = re.search(r'(\d{5,})', accession)
     if not record_id:
@@ -109,9 +113,9 @@ def get_zenodo_size(accession: str) -> float:
         return 0.0
     record_id = record_id.group(1)
 
-    url = f"{config.ZENODO_API}/{record_id}"
+    url = f"{cfg.api_endpoints.zenodo_api}/{record_id}"
     try:
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(url, timeout=cfg.timeouts.api_listing)
         if resp.status_code != 200:
             log.warning("Zenodo API returned %d for record %s", resp.status_code, record_id)
             return 0.0
@@ -143,12 +147,13 @@ def get_sra_size(accession: str) -> float:
     Uses the NCBI Run Selector API to get run sizes.
     This is less reliable than GEO/Zenodo — returns 0 on failure.
     """
+    cfg = get_config()
     url = (
         f"https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi"
         f"?save=efetch&db=sra&rettype=runinfo&term={accession}"
     )
     try:
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(url, timeout=cfg.timeouts.api_listing)
         if resp.status_code != 200:
             return 0.0
         # RunInfo CSV has a 'size_MB' column
@@ -187,9 +192,10 @@ def get_sra_size(accession: str) -> float:
 
 def get_openneuro_size(accession: str) -> float:
     """Return total size in GB for an OpenNeuro dataset."""
+    cfg = get_config()
     try:
-        url = f"https://openneuro.org/crn/datasets/{accession}"
-        resp = requests.get(url, timeout=15)
+        url = f"{cfg.api_endpoints.openneuro_api}/{accession}"
+        resp = requests.get(url, timeout=cfg.timeouts.api_listing)
         if resp.status_code != 200:
             log.warning("OpenNeuro API returned %d for %s", resp.status_code, accession)
             return 0.0
@@ -207,12 +213,14 @@ def get_openneuro_size(accession: str) -> float:
 
 def get_figshare_size(accession: str) -> float:
     """Return total size in GB for a Figshare article."""
+    cfg = get_config()
     article_id = re.search(r'(\d{5,})', accession)
     if not article_id:
         return 0.0
     article_id = article_id.group(1)
     try:
-        resp = requests.get(f"https://api.figshare.com/v2/articles/{article_id}/files", timeout=15)
+        resp = requests.get(f"{cfg.api_endpoints.figshare_api}/{article_id}/files",
+                            timeout=cfg.timeouts.api_listing)
         if resp.status_code != 200:
             return 0.0
         files = resp.json()
@@ -260,6 +268,7 @@ def _check_one_paper(paper: dict) -> dict:
     Only primary datasets count toward the size limit.
     Reanalyzed datasets are skipped.
     """
+    cfg = get_config()
     accessions = paper.get("dataset_accession", [])
     primary = [a for a in accessions if a.get("role", "primary") != "reanalyzed"]
     if not primary:
@@ -271,7 +280,7 @@ def _check_one_paper(paper: dict) -> dict:
     details = []
     total_gb = 0.0
     for acc_info in primary:
-        time.sleep(config.GEO_DELAY)
+        time.sleep(cfg.rate_limits.geo_delay)
         size = get_dataset_size(acc_info)
         details.append({
             "accession": acc_info.get("accession", ""),
@@ -289,14 +298,16 @@ def _check_one_paper(paper: dict) -> dict:
 
 def verify_paper_sizes(
     papers: list[dict],
-    max_size_gb: float = config.MAX_DATA_SIZE_GB,
-    max_workers: int = config.SIZE_CHECK_WORKERS,
 ) -> tuple[list[dict], list[dict]]:
     """Verify dataset sizes for all papers.
 
-    Returns (passed, rejected) where rejected papers exceed max_size_gb.
+    Returns (passed, rejected) where rejected papers exceed the configured max size.
     Papers whose size cannot be determined are kept but flagged.
     """
+    cfg = get_config()
+    max_size_gb = cfg.thresholds.max_data_size_gb
+    max_workers = cfg.parallelism.size_check_workers
+
     log.info("Verifying dataset sizes for %d papers...", len(papers))
 
     checked: list[dict] = []

@@ -23,37 +23,43 @@ export ANTHROPIC_API_KEY=sk-...
 ## Usage
 
 ```bash
-# Full run with review gate (pauses before downloading)
-python -m kosmos_pipeline -o ./runs/2026-04-01 --review --skip-upload
+# Generate a default config.yaml in a new run directory
+python -m kosmos_pipeline init ./runs/2026-04-01
+
+# Edit the config, then run with review gate (pauses before downloading)
+python -m kosmos_pipeline run --config ./runs/2026-04-01/config.yaml --review --skip-upload
 
 # Search + evaluate only (no downloads)
-python -m kosmos_pipeline -o ./runs/2026-04-01 --skip-download --skip-upload
-
-# Exclude already-benchmarked papers
-python -m kosmos_pipeline -o ./runs/2026-04-01 \
-  --exclude-dois existing_papers.xlsx --review
+python -m kosmos_pipeline run --config config.yaml --skip-download --skip-upload
 
 # Resume after interruption (checkpoints are automatic)
-python -m kosmos_pipeline -o ./runs/2026-04-01
+python -m kosmos_pipeline run --config config.yaml
 
 # Full pipeline including Edison upload
-python -m kosmos_pipeline -o ./runs/2026-04-01 --stage DEV
+python -m kosmos_pipeline run --config config.yaml
 ```
 
-## CLI options
+## Configuration
 
-| Flag | Description |
+All pipeline parameters live in a `config.yaml` file. Run `python -m kosmos_pipeline init` to generate one with all defaults. A partial config works — only specified values override defaults.
+
+See `config.default.yaml` for the full reference with all default values.
+
+Key config sections: `pipeline` (model, output, stage), `thresholds` (scoring cutoffs), `journals` (tier lists), `search` (query text), `evaluation` (Claude rubric), `parallelism`, `rate_limits`, `api_endpoints`, `timeouts`, `script_filtering`, `filtering` (regex patterns), `upload`.
+
+## CLI
+
+| Subcommand | Description |
 |---|---|
-| `-o, --output-dir` | Output directory (default: `./runs/YYYY-MM-DD`) |
+| `init [directory]` | Generate a default `config.yaml` in the given directory (default: `.`) |
+| `run --config PATH` | Run the pipeline using the specified config |
+
+| Flag (run only) | Description |
+|---|---|
+| `--config, -c` | Path to `config.yaml` |
 | `--review` | Pause after paper selection for review before downloading |
 | `--skip-download` | Skip dataset download step |
 | `--skip-upload` | Skip Edison upload step |
-| `--max-candidates N` | Max papers to evaluate via Claude API (default: 150) |
-| `--max-papers N` | Max papers in final output (default: 20) |
-| `--model` | Claude model for evaluation (default: `claude-opus-4-6`) |
-| `--exclude-dois FILE` | File with DOIs to exclude (one per line, or .xlsx) |
-| `--stage` | Edison environment: DEV, STAGING, PROD |
-| `--kosmos-opt-dir` | Path to kosmos-opt repo for Edison uploads |
 | `--no-resume` | Start fresh, ignoring checkpoints |
 | `-v, --verbose` | Debug logging |
 
@@ -61,6 +67,7 @@ python -m kosmos_pipeline -o ./runs/2026-04-01 --stage DEV
 
 ```
 runs/2026-04-01/
+├── config.yaml                                # Config used for this run
 ├── status.json                                # Live progress tracker
 ├── computational_biology_papers_2026.json     # Final curated paper list
 ├── manifest.json                              # Links paper → PDF → probe → data_entry
